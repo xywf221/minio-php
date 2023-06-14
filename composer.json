@@ -1,0 +1,24 @@
+{
+    "name": "xywf221/minio-php",
+    "description": "MinIO Client SDK for Javascript",
+    "type": "library",
+    "license": "Apache License 2.0",
+    "autoload": {
+        "psr-4": {
+            "xywf221\\Minio\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "dmls",
+            "email": "dongmenleishao@outlook.com"
+        }
+    ],
+    "require": {
+        "guzzlehttp/guzzle": "^7.7",
+        "symfony/serializer": "^6.3",
+        "symfony/property-access": "^6.3",
+        "phpdocumentor/type-resolver": "^1.7",
+        "symfony/options-resolver": "^6.3"
+    }
+}
