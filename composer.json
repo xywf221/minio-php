@@ -6,7 +6,10 @@
     "autoload": {
         "psr-4": {
             "xywf221\\Minio\\": "src/"
-        }
+        },
+        "files": [
+            "src/function.php"
+        ]
     },
     "authors": [
         {

@@ -1,54 +1,68 @@
 <?php
 
-namespace xywf221\Minio\Http\Middleware;
+namespace xywf221\Minio\Signature;
 
-use GuzzleHttp\Promise\PromiseInterface;
+use GuzzleHttp\Psr7\Uri;
 use InvalidArgumentException;
 use Psr\Http\Message\RequestInterface;
 use xywf221\Minio\Constant;
 use xywf221\Minio\Credentials;
 
-class RequestSignature
+class SignatureV4 implements SignatureInterface
 {
-
-
-    public static function create(Credentials $credentials): \Closure
+    /**
+     * @param RequestInterface $request
+     * @param array $config
+     * @return RequestInterface
+     */
+    public function presignedSignature(RequestInterface $request, array $config): RequestInterface
     {
-        return static function (callable $handler) use ($credentials) {
-            return new self($credentials, $handler);
-        };
+        if (!isset($config['credentials'])) {
+            throw new InvalidArgumentException('credentials is required');
+        }
+        /** @var Credentials $credentials */
+        $credentials = $config['credentials'];
+
+        $now = time();
+        $credential = $this->getCredential($credentials->accessKey, $config['location'], $now, Constant::ServiceTypeS3);
+        $signedHeaders = $this->getSignedHeaders($request, Constant::V4IgnoredHeaders);
+        $query = [
+            'X-Amz-Algorithm' => Constant::SignV4Algorithm,
+            'X-Amz-Credential' => urlencode($credential),
+            'X-Amz-Date' => date(Constant::DateIso8601Format, $now),
+            'X-Amz-Expires' => $config['expires'],
+            'X-Amz-SignedHeaders' => $signedHeaders,
+        ];
+        if (!empty($credentials->sessionToken)) {
+            $query['X-Amz-Security-Token'] = $credentials->sessionToken;
+        }
+        $uri = Uri::withQueryValues($request->getUri(), $query);
+        $request = $request->withUri($uri);
+        $canonicalRequest = $this->getCanonicalRequest($request, Constant::V4IgnoredHeaders, $this->getHashedPayload($request));
+        $stringToSign = $this->getStringToSign($config['location'], $now, $canonicalRequest, Constant::ServiceTypeS3);
+        $signingKey = $this->getSigningKey($credentials->secretKey, $config['location'], $now, Constant::ServiceTypeS3);
+        $signature = $this->getSignature($signingKey, $stringToSign);
+        return $request->withUri(Uri::withQueryValue($uri, 'X-Amz-Signature', $signature));
     }
 
     /**
-     * @param Credentials $credentials
-     * @param callable(RequestInterface, array): PromiseInterface $nextHandler
+     * @param RequestInterface $request
+     * @param array $config
+     * @return RequestInterface
      */
-    public function __construct(private Credentials $credentials, private $nextHandler)
+    public function signature(RequestInterface $request, array $config): RequestInterface
     {
-    }
-
-
-    public function __invoke(RequestInterface $request, array $options)
-    {
-        $fn = $this->nextHandler;
-
-        if (!isset($options['location'])) {
-            throw new InvalidArgumentException('location is required');
-        }
-        $location = $options['location'];
-
-        if (!isset($options['serviceType'])) {
-            throw new InvalidArgumentException('serviceType is required');
-        }
-
-        $serviceType = $options['serviceType'];
+        $location = $config['location'];
+        $serviceType = $config['serviceType'];
+        /** @var Credentials $credentials */
+        $credentials = $config['credentials'];
 
         $now = time();
 
         $request = $request->withHeader('X-Amz-Date', date(Constant::DateIso8601Format, $now));
 
-        if (!empty($this->credentials->sessionToken)) {
-            $request = $request->withHeader('X-Amz-Security-Token', $this->credentials->sessionToken);
+        if (!empty($credentials->sessionToken)) {
+            $request = $request->withHeader('X-Amz-Security-Token', $credentials->sessionToken);
         }
 
         $hashedPayload = $this->getHashedPayload($request);
@@ -58,11 +72,11 @@ class RequestSignature
 
         $canonicalRequest = $this->getCanonicalRequest($request, Constant::V4IgnoredHeaders, $hashedPayload);
 
-        $stringToSign = $this->getStringToSignV4($location, $now, $canonicalRequest, $serviceType);
+        $stringToSign = $this->getStringToSign($location, $now, $canonicalRequest, $serviceType);
 
-        $signingKey = $this->getSigningKey($this->credentials->secretKey, $location, $now, $serviceType);
+        $signingKey = $this->getSigningKey($credentials->secretKey, $location, $now, $serviceType);
 
-        $credential = $this->getCredential($this->credentials->accessKey, $location, $now, $serviceType);
+        $credential = $this->getCredential($credentials->accessKey, $location, $now, $serviceType);
 
         $signedHeaders = $this->getSignedHeaders($request, Constant::V4IgnoredHeaders);
 
@@ -74,14 +88,12 @@ class RequestSignature
             'Signature=' . $signature,
         ];
 
-        $request = $request->withHeader('Authorization', join(', ', $parts));
-        return $fn($request, $options);
+        return $request->withHeader('Authorization', join(', ', $parts));
     }
-
 
     private function getSignature(string $signingKey, string $stringToSign): string
     {
-        return bin2hex($this->hmacSha256($signingKey, $stringToSign));
+        return $this->hmacSha256($signingKey, $stringToSign, false);
     }
 
     private function getCredential(string $accessKey, string $location, int $timestamp, string $serviceType): string
@@ -101,13 +113,14 @@ class RequestSignature
     /**
      * @param string $key
      * @param string $data
+     * @param bool $binary
      * @return string
      */
-    private function hmacSha256(string $key, string $data): string
+    private function hmacSha256(string $key, string $data, bool $binary = true): string
     {
         $ctx = hash_init('sha256', HASH_HMAC, $key);
         hash_update($ctx, $data);
-        return hash_final($ctx, true);
+        return hash_final($ctx, $binary);
     }
 
 
@@ -118,7 +131,7 @@ class RequestSignature
      * @param string $serviceType
      * @return string
      */
-    private function getStringToSignV4(string $location, int $timestamp, string $canonicalRequest, string $serviceType): string
+    private function getStringToSign(string $location, int $timestamp, string $canonicalRequest, string $serviceType): string
     {
         $stringToSign = Constant::SignV4Algorithm . "\n" . date(Constant::DateIso8601Format, $timestamp) . "\n";
         $stringToSign .= $this->getScope($location, $timestamp, $serviceType) . "\n";
@@ -190,7 +203,7 @@ class RequestSignature
             $values[strtolower($key)] = $val;
         }
 
-        arsort($values);
+        ksort($values);
         $buf = '';
 
         foreach ($values as $key => $val) {
@@ -234,5 +247,4 @@ class RequestSignature
         sort($keys);
         return join(';', $keys);
     }
-
 }

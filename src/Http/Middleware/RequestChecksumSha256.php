@@ -5,8 +5,9 @@ namespace xywf221\Minio\Http\Middleware;
 use Closure;
 use GuzzleHttp\Psr7\Request;
 use xywf221\Minio\Constant;
+use function xywf221\Minio\hash_stream;
 
-class RequestAmzContent
+class RequestChecksumSha256
 {
     public static function create(): Closure
     {
@@ -16,15 +17,13 @@ class RequestAmzContent
                 array   $options
             ) use ($handler) {
                 // 这里等一个如果启用才会根据content-sha256签名
-                $body = $request->getBody();
-                if ($body->getSize() == 0) {
-                    $request = $request->withHeader('X-Amz-Content-Sha256', Constant::UnsignedPayload);
+                if ($options['enableCheckSumSha256'] ?? false) {
+                    $body = $request->getBody();
+                    $sha256sum = hash_stream('sha256', $body);
                 } else {
-                    $ctx = hash_init('sha256');
-                    hash_update($ctx, $body->getContents());
-                    $hex = hash_final($ctx);
-                    $request = $request->withHeader('X-Amz-Content-Sha256', $hex);
+                    $sha256sum = Constant::UnsignedPayload;
                 }
+                $request = $request->withHeader('X-Amz-Content-Sha256', $sha256sum);
                 return $handler($request, $options);
             };
         };

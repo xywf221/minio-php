@@ -1,13 +1,10 @@
 <?php
 
-use Symfony\Component\PropertyInfo;
-use Symfony\Component\Serializer;
-use Symfony\Component\Serializer\Mapping\Factory\ClassMetadataFactory;
-use Symfony\Component\Serializer\Mapping\Loader\AnnotationLoader;
-use Symfony\Component\Serializer\NameConverter\MetadataAwareNameConverter;
-use xywf221\Minio\Client;
-use xywf221\Minio\Message\ListAllMyBucketsResult;
 
+use GuzzleHttp\Psr7\Request;
+use xywf221\Minio\Client;
+use xywf221\Minio\Credentials;
+use xywf221\Minio\Signature\SignatureV4;
 
 require_once './vendor/autoload.php';
 
@@ -17,5 +14,17 @@ $client = new Client([
     'secretKey' => 'O1ZXDdkFzf1epioPDb7QEXNEKS5GJcespa5cnvrp',
     'secure' => true
 ]);
-//var_dump($client->listBuckets()->getOwner()->getId());
-var_dump($client->getBucketLocation('test'));
+$buckets = $client->listBuckets();
+var_dump($buckets);
+
+$request = new Request('GET', 'https://minio-ra.proce.top/test/test.abc');
+
+$signature = new SignatureV4();
+$request = $signature->presignedSignature($request, [
+    'credentials' => new Credentials('6IZWMG2D8k5yAflOwA7w', 'O1ZXDdkFzf1epioPDb7QEXNEKS5GJcespa5cnvrp'),
+    'location' => 'us-east-1',
+    'sessionToken' => '',
+    'expires' => 3600
+]);
+
+echo $request->getUri();

@@ -8,6 +8,7 @@ use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Uri;
 use GuzzleHttp\Utils;
+use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\StreamInterface;
 use Symfony\Component\OptionsResolver\OptionsResolver;
 use Symfony\Component\PropertyInfo\Extractor\PhpStanExtractor;
@@ -18,11 +19,13 @@ use Symfony\Component\Serializer\NameConverter\MetadataAwareNameConverter;
 use Symfony\Component\Serializer\Normalizer\ArrayDenormalizer;
 use Symfony\Component\Serializer\Normalizer\ObjectNormalizer;
 use Symfony\Component\Serializer\Serializer;
+use xywf221\Minio\Exception\InvalidContentTypeException;
 use xywf221\Minio\Http\BodySummarizer;
-use xywf221\Minio\Http\Middleware\RequestAmzContent;
-use xywf221\Minio\Http\Middleware\RequestSignature;
+use xywf221\Minio\Http\Middleware\RequestChecksumSha256;
+use xywf221\Minio\Http\Middleware\RequestSignatureV4;
 use xywf221\Minio\Message\ListAllMyBucketsResult;
 use xywf221\Minio\Message\LocationConstraint;
+use xywf221\Minio\Signature\SignatureV4;
 
 
 class Client
@@ -55,11 +58,12 @@ class Client
         $stack = new HandlerStack(Utils::chooseHandler());
         $bodySummarizer = new BodySummarizer($this->serializer);
         $stack->push(Middleware::httpErrors($bodySummarizer), 'http_errors');
-        $stack->push(Middleware::cookies(), 'cookies');
         $stack->push(Middleware::prepareBody(), 'prepare_body');
 
-        $stack->push(RequestAmzContent::create());
-        $stack->push(RequestSignature::create(new Credentials($this->options['accessKey'], $this->options['secretKey'], $this->options['sessionToken'])));
+        $stack->push(RequestChecksumSha256::create());
+        $stack->push(RequestSignatureV4::create(new SignatureV4()));
+
+        $credentials = new Credentials($this->options['accessKey'], $this->options['secretKey'], $this->options['sessionToken']);
 
         $config = [
             'handler' => $stack,
@@ -68,7 +72,9 @@ class Client
                 'User-Agent' => $this->getUserAgent()
             ],
             'location' => 'us-east-1',
-            'serviceType' => Constant::ServiceTypeS3
+            'serviceType' => Constant::ServiceTypeS3,
+            'verify' => false,
+            'credentials' => $credentials
         ];
         return new HttpClient($config);
     }
@@ -83,7 +89,7 @@ class Client
                 new ObjectNormalizer($classMetadataFactory, $metadataAwareNameConverter, propertyTypeExtractor: new PhpStanExtractor()),
                 new ArrayDenormalizer()
             ],
-            encoders: ['xml' => new XmlEncoder()]
+            encoders: [new XmlEncoder()]
         );
     }
 
@@ -99,11 +105,12 @@ class Client
 
     /**
      * @throws GuzzleException
+     * @throws InvalidContentTypeException
      */
     public function getBucketLocation(string $bucketName): string
     {
         $response = $this->httpClient->get("$bucketName/?location=");
-        $lc = $this->deserializeResponse($response->getBody(), LocationConstraint::class);
+        $lc = $this->deserializeResponse($response, LocationConstraint::class);
         return match ($lc->getLocation()) {
             '' => Constant::UsEast1,
             'EU' => Constant::UsWest1,
@@ -113,30 +120,62 @@ class Client
 
     /**
      * @throws GuzzleException
+     * @throws InvalidContentTypeException
      */
     public function bucketExists(string $bucketName): bool
     {
         $response = $this->httpClient->head("$bucketName/?location=");
-        return $this->deserializeResponse($response->getBody(), LocationConstraint::class);
+        return $this->deserializeResponse($response, LocationConstraint::class);
     }
 
 
     /**
      * @throws GuzzleException
+     * @throws InvalidContentTypeException
      */
     public function listBuckets(): ListAllMyBucketsResult
     {
         $response = $this->httpClient->get('/');
-        return $this->deserializeResponse($response->getBody(), ListAllMyBucketsResult::class);
+        return $this->deserializeResponse($response, ListAllMyBucketsResult::class);
     }
 
-    public function makeBucket(){
-
-    }
-
-    private function deserializeResponse(StreamInterface $body, string $class): mixed
+    public function makeBucket()
     {
-        return $this->serializer->deserialize($body->getContents(), $class, 'xml');
+
+    }
+
+    /**
+     * @param string $bucketName
+     * @param string $objectName
+     * @param StreamInterface|resource|string $data
+     * @param int|null $size
+     * @param string|null $contentType
+     * @return void
+     * @throws GuzzleException
+     */
+    public function putObject(string $bucketName, string $objectName, mixed $data, int $size = null, string $contentType = null)
+    {
+        //https://minio-ra.proce.top/test/test.abc?uploads=
+        $response = $this->httpClient->post('test/test.abc?uploads=', [
+            'headers' => [
+                'X-Amz-Checksum-Algorithm' => 'CRC32C',
+                'Content-type' => 'application/octet-stream',
+            ],
+        ]);
+        var_dump($response->getBody()->getContents());
+    }
+
+    /**
+     * @throws InvalidContentTypeException
+     */
+    private function deserializeResponse(ResponseInterface $response, string $class): object
+    {
+        // check content type
+        $contentType = $response->getHeaderLine('Content-Type');
+        if ($contentType !== 'application/xml') {
+            throw new InvalidContentTypeException('Invalid content type: ' . $contentType);
+        }
+        return $this->serializer->deserialize($response->getBody()->getContents(), $class, 'xml');
     }
 
     private function getUserAgent(): string
