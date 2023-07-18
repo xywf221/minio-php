@@ -18,8 +18,12 @@ class RequestChecksumSha256
             ) use ($handler) {
                 // 这里等一个如果启用才会根据content-sha256签名
                 if ($options['enableCheckSumSha256'] ?? false) {
-                    $body = $request->getBody();
-                    $sha256sum = hash_stream('sha256', $body);
+                    if (isset($options['contentCheckSumSha256'])) {
+                        $sha256sum = $options['contentCheckSumSha256'];
+                    } else {
+                        $body = $request->getBody();
+                        $sha256sum = hash_stream('sha256', $body);
+                    }
                 } else {
                     $sha256sum = Constant::UnsignedPayload;
                 }

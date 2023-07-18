@@ -8,10 +8,8 @@ use Psr\Http\Message\RequestInterface;
 use xywf221\Minio\Constant;
 use xywf221\Minio\Signature\SignatureInterface;
 
-class RequestSignatureV4
+class RequestSignature
 {
-
-
     public static function create(SignatureInterface $signature): \Closure
     {
         return static function (callable $handler) use ($signature) {

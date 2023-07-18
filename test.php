@@ -2,6 +2,7 @@
 
 
 use GuzzleHttp\Psr7\Request;
+use Symfony\Component\Serializer\Encoder\XmlEncoder;
 use xywf221\Minio\Client;
 use xywf221\Minio\Credentials;
 use xywf221\Minio\Signature\SignatureV4;
@@ -14,17 +15,8 @@ $client = new Client([
     'secretKey' => 'O1ZXDdkFzf1epioPDb7QEXNEKS5GJcespa5cnvrp',
     'secure' => true
 ]);
-$buckets = $client->listBuckets();
-var_dump($buckets);
 
-$request = new Request('GET', 'https://minio-ra.proce.top/test/test.abc');
-
-$signature = new SignatureV4();
-$request = $signature->presignedSignature($request, [
-    'credentials' => new Credentials('6IZWMG2D8k5yAflOwA7w', 'O1ZXDdkFzf1epioPDb7QEXNEKS5GJcespa5cnvrp'),
-    'location' => 'us-east-1',
-    'sessionToken' => '',
-    'expires' => 3600
-]);
-
-echo $request->getUri();
+//$client->makeBucket('php-create-bucket');
+//var_dump($client->listBuckets());
+//var_dump($client->bucketExists('php-create-bucket'));
+$client->removeBucket('php-create-bucket');
